@@ -3,7 +3,7 @@
  *
  * @license   http://www.gnu.org/licenses/gpl.html GPL Version 3
  * @author    Volker Theile <volker.theile@openmediavault.org>
- * @copyright Copyright (c) 2009-2022 Volker Theile
+ * @copyright Copyright (c) 2009-2025 Volker Theile
  *
  * OpenMediaVault is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -44,7 +44,7 @@ export const flattenFormFieldConfig = (fields: Array<FormFieldConfig>): Array<Fo
 export const setupConfObjUuidFields = (fields: Array<FormFieldConfig>) => {
   const filteredFields = _.filter(fields, { type: 'confObjUuid' });
   if (filteredFields.length > 1) {
-    throw new Error('Only one \'confObjUuid\' field per form is allowed.');
+    throw new Error("Only one 'confObjUuid' field per form is allowed.");
   }
   if (filteredFields.length === 1) {
     // Set the UUID that is used to tell the backend that the
