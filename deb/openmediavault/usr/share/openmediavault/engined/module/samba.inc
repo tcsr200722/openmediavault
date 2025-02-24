@@ -4,7 +4,7 @@
  *
  * @license   http://www.gnu.org/licenses/gpl.html GPL Version 3
  * @author    Volker Theile <volker.theile@openmediavault.org>
- * @copyright Copyright (c) 2009-2022 Volker Theile
+ * @copyright Copyright (c) 2009-2025 Volker Theile
  *
  * OpenMediaVault is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,6 +29,10 @@ class Samba extends \OMV\Engine\Module\ServiceAbstract implements
 		return "samba";
 	}
 
+	public function getDescription() {
+		return gettext("SMB/CIFS file, print, and login server for Unix.");
+	}
+
 	public function getStatus() {
 		$db = \OMV\Config\Database::getInstance();
 		$object = $db->get("conf.service.smb");
@@ -47,7 +51,7 @@ class Samba extends \OMV\Engine\Module\ServiceAbstract implements
 	 * @param username The name of the user.
 	 * @return bool TRUE if the user exists, otherwise FALSE.
 	 */
-	final private function existsUser($username) {
+	private function existsUser($username) {
 		$cmdLine = sprintf("pdbedit --list | grep '%s:'", $username);
 		$cmd = new \OMV\System\Process($cmdLine);
 		$cmd->setQuiet(TRUE);
@@ -69,11 +73,12 @@ class Samba extends \OMV\Engine\Module\ServiceAbstract implements
 		if (FALSE === array_key_exists("password", $object))
 			return;
 		// Add the new user into the database.
+		$pwdFile = new \OMV\System\TmpFile();
+		$pwdFile->write(sprintf("%s\n%s\n", $object['password'],
+			$object['password']));
 		$cmdArgs = [];
-		$cmdArgs[] = sprintf("(echo %s; echo %s)", escapeshellarg(
-			$object['password']), escapeshellarg($object['password']));
-		$cmdArgs[] = "|";
-		$cmdArgs[] = "pdbedit";
+		$cmdArgs[] = sprintf("--configfile=%s", escapeshellarg(
+			"/etc/samba/smb.conf"));
 		$cmdArgs[] = "--create";
 		$cmdArgs[] = "--verbose";
 		$cmdArgs[] = "--password-from-stdin";
@@ -83,9 +88,10 @@ class Samba extends \OMV\Engine\Module\ServiceAbstract implements
 				$object['comment']));
 		}
 		$cmdArgs[] = escapeshellarg($object['name']);
-		$cmd = implode(" ", $cmdArgs);
-		if (0 !== $this->exec($cmd, $output))
-			throw new \OMV\ExecException($cmd, $output);
+		$cmd = new \OMV\System\Process("pdbedit", $cmdArgs);
+		$cmd->setInputFromFile($pwdFile->getFilename());
+		$cmd->setRedirect2to1();
+		$cmd->execute();
 	}
 
 	/**
@@ -104,6 +110,8 @@ class Samba extends \OMV\Engine\Module\ServiceAbstract implements
 			return $this->onAddUser($type, $path, $object);
 		// Modify the user in the database.
 		$cmdArgs = [];
+		$cmdArgs[] = sprintf("--configfile=%s", escapeshellarg(
+			"/etc/samba/smb.conf"));
 		$cmdArgs[] = "--modify";
 		$cmdArgs[] = "--verbose";
 		$cmdArgs[] = sprintf("--fullname=%s", escapeshellarg($object['name']));
@@ -119,16 +127,18 @@ class Samba extends \OMV\Engine\Module\ServiceAbstract implements
 		// changed (in this case it is not empty).
 		if (array_key_exists("password", $object) &&
 				!empty($object['password'])) {
+			$pwdFile = new \OMV\System\TmpFile();
+			$pwdFile->write(sprintf("%s\n%s\n", $object['password'],
+				$object['password']));
 			$cmdArgs = [];
-			$cmdArgs[] = sprintf("(echo %s; echo %s)", escapeshellarg(
-			  $object['password']), escapeshellarg($object['password']));
-			$cmdArgs[] = "|";
-			$cmdArgs[] = "smbpasswd";
+			$cmdArgs[] = sprintf("-c %s", escapeshellarg(
+				"/etc/samba/smb.conf"));
 			$cmdArgs[] = "-s";
 			$cmdArgs[] = escapeshellarg($object['name']);
-			$cmd = implode(" ", $cmdArgs);
-			if (0 !== $this->exec($cmd, $output))
-				throw new \OMV\ExecException($cmd, $output);
+			$cmd = new \OMV\System\Process("smbpasswd", $cmdArgs);
+			$cmd->setInputFromFile($pwdFile->getFilename());
+			$cmd->setRedirect2to1();
+			$cmd->execute();
 		}
 	}
 
@@ -147,6 +157,8 @@ class Samba extends \OMV\Engine\Module\ServiceAbstract implements
 			return;
 		// Delete the user from the database.
 		$cmdArgs = [];
+		$cmdArgs[] = sprintf("-c %s", escapeshellarg(
+			"/etc/samba/smb.conf"));
 		$cmdArgs[] = "--delete";
 		$cmdArgs[] = "--verbose";
 		$cmdArgs[] = escapeshellarg($object['name']);
@@ -224,5 +236,11 @@ class Samba extends \OMV\Engine\Module\ServiceAbstract implements
 			OMV_NOTIFY_CREATE | OMV_NOTIFY_MODIFY | OMV_NOTIFY_DELETE,
 			"org.openmediavault.conf.service.smb.share",
 			[$moduleMngr->getModule("zeroconf"), "setDirty"]);
+		// If NetBIOS is enabled, changing the hostname requires a restart
+		// of the `nmbd.service` systemd unit.
+		$dispatcher->addListener(
+			OMV_NOTIFY_MODIFY,
+			"org.openmediavault.conf.system.network.dns",
+			[$this, "setDirty"]);
 	}
 }
