@@ -4,7 +4,7 @@
  *
  * @license   http://www.gnu.org/licenses/gpl.html GPL Version 3
  * @author    Volker Theile <volker.theile@openmediavault.org>
- * @copyright Copyright (c) 2009-2022 Volker Theile
+ * @copyright Copyright (c) 2009-2025 Volker Theile
  *
  * OpenMediaVault is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -105,7 +105,8 @@ class Manager {
 
 	/**
 	 * Helper function to get a list of dirty modules.
-	 * @return array An array containing the names of the dirty marked modules.
+	 * @return array A sorted array containing the names of the modules
+	 *   that are marked dirty.
 	 */
 	final public function getDirtyModules() {
 		$jsonFile = new \OMV\Json\File(\OMV\Environment::get(
@@ -115,7 +116,23 @@ class Manager {
 		$jsonFile->open("r", LOCK_SH);
 		$modules = array_unique($jsonFile->read());
 		$jsonFile->close();
+		sort($modules, SORT_NATURAL);
 		return $modules;
+	}
+
+	/**
+	 * Helper function to get the names and descriptions of all dirty
+	 * modules.
+	 * @return array An associative array with name/desc pairs of the
+	 *   dirty marked modules.
+	 */
+	final public function getDirtyModulesAssoc() {
+		$names = $this->getDirtyModules();
+		$descriptions = array_map(function($name) {
+			$module = $this->getModule($name);
+			return $module ? $module->getDescription() : "";
+		}, $names);
+		return array_combine($names, $descriptions);
 	}
 
 	/**
@@ -137,7 +154,7 @@ class Manager {
 			$modules = $jsonFile->read();
 		// Append the specified dirty module.
 		$modules[] = mb_strtolower($name);
-		$modules = array_unique($modules);
+		$modules = array_values(array_unique($modules));
 		$jsonFile->write($modules);
 		$jsonFile->close();
 		return $modules;

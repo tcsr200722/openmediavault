@@ -28,6 +28,7 @@ import sys
 from typing import Any, Callable, Dict, List, Union
 
 import click
+import natsort
 import openmediavault.collectiontools
 import openmediavault.datamodel.schema
 import openmediavault.json.schema
@@ -108,13 +109,15 @@ def load_components(skip_invalid: bool = True, verbose: bool = False) -> Dict:
             'data': {'type': 'object', 'properties': {
                 'name': {'type': 'string', 'required': True},
                 'type': {'type': 'string', 'enum': [
+                    'blankPage',
                     'navigationPage',
                     'formPage',
                     'selectionListPage',
                     'textPage',
                     'tabsPage',
                     'datatablePage',
-                    'rrdPage'
+                    'rrdPage',
+                    'codeEditorPage',
                 ], 'required': True},
                 'extends': {'type': 'string'},
                 'config': {'type': 'object', 'properties': {}}
@@ -142,7 +145,7 @@ def load_components(skip_invalid: bool = True, verbose: bool = False) -> Dict:
             sys.exit(1)
         v['config'] = openmediavault.collectiontools.merge(
             copy.deepcopy(component_dict[v['extends']]['config']),
-            v['config'])
+            v.get('config', {}))
         v.pop('extends')
 
     return component_dict
@@ -172,6 +175,7 @@ def all_():
     ctx.invoke(navigation)
     ctx.invoke(route)
     ctx.invoke(log)
+    ctx.invoke(mkfs)
     ctx.invoke(i18n)
 
 
@@ -276,6 +280,14 @@ def route(ctx):
             'data': {'type': 'object', 'properties': {
                 'url': {'type': 'string', 'required': True},
                 'title': {'type': 'string'},
+                'breadcrumb': {'type': 'object', 'properties': {
+                    'text': {'type': 'string', 'required': True},
+                    'request': {'type': 'object', 'properties': {
+                        'service': {'type': 'string', 'required': True},
+                        'method': {'type': 'string', 'required': True},
+                        'params': {'type': 'object', 'properties': {}}
+                    }}
+                }},
                 'editing': {'type': 'boolean'},
                 'notificationTitle': {'type': 'string'},
                 'component': {'type': 'string', 'required': True}
@@ -358,15 +370,48 @@ def i18n(ctx):
             continue
         lang = os.path.basename(lang_dir)
         lang_file_path = os.path.join(assets_i18n_dir, f'{lang}.json')
+        po_files = glob.iglob(os.path.join(lang_dir, '*.po'))
         translations = {}
-        for po_file_path in glob.iglob(os.path.join(lang_dir, '*.po')):
+        # Process the *.po files naturally in reverse order to ensure
+        # the core translations are extracted from the openmediavault.po
+        # file.
+        for po_file_path in natsort.humansorted(po_files, reverse=True):
             po_file = polib.pofile(po_file_path)
             openmediavault.log.info(
                 'Processing PO file "%s" ...', po_file_path, verbose=ctx.verbose)
             for entry in po_file.translated_entries():
-                if entry.msgid and entry.msgstr:
+                if entry.msgid and entry.msgstr and (entry.msgid not in translations):
                     translations[entry.msgid] = entry.msgstr
         write_json_file(lang_file_path, translations, ctx.verbose)
+
+
+@cli.command(name='mkfs', help='Build the mkfs configuration file.')
+@pass_context
+def mkfs(ctx):
+    mkfs_dir = openmediavault.getenv(
+        'OMV_WORKBENCH_MKFS_CONFIG_DIR',
+        '/usr/share/openmediavault/workbench/mkfs.d'
+    )
+    mkfs_file = openmediavault.getenv(
+        'OMV_WORKBENCH_MKFS_CONFIG_ASSETS_FILE',
+        '/var/www/openmediavault/assets/mkfs-config.json'
+    )
+    mkfs_schema = openmediavault.datamodel.Schema({
+        'type': 'object',
+        'properties': {
+            'version': {'type': 'string', 'required': True},
+            'type': {'type': 'string', 'enum': ['mkfs'], 'required': True},
+            'data': {'type': 'object', 'properties': {
+                'text': {'type': 'string', 'required': True},
+                'url': {'type': 'string', 'required': True}
+            }}
+        }
+    })
+    openmediavault.log.info(
+        'Creating mkfs configuration file ...', verbose=ctx.verbose)
+    log_configs = load_yaml_files(
+        mkfs_schema, mkfs_dir, ctx.skip_invalid, ctx.verbose)
+    write_json_file(mkfs_file, log_configs, ctx.verbose)
 
 
 def main():
